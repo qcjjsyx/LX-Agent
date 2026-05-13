@@ -1,0 +1,334 @@
+{
+  "meta": {
+    "schema": "base_component_family_templates",
+    "schema_version": "1.1",
+    "notes": [
+      "Contracts here are lab-level invariants. Implementation details (bit packing, exact expressions, port naming) are intentionally left flexible.",
+      "Parsing should map arbitrary port names to these roles via either (1) component header annotation, or (2) evidence-based inference (AST/features), not by guessing.",
+      "All 'drive' signals and 'free' signals can be regarded as event handshakes and releases."
+    ]
+  },
+
+  "templates": [
+    {
+      "family": "SelSplit",
+      "kind": "base_component_template",
+      "params": {
+        "NUM_PORTS": null,
+        "DATA_WIDTH": null,
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream": {
+          "drive_port": null,
+          "free_port": null
+        },
+        "downstream": {
+          "drive_ports": null,
+          "free_ports": null
+        },
+        "reset": { "reset_port": "rstn", "reset_active_low": true },
+        "input_condition_and_payload": {
+          "selection_mode": "unknown",
+          "selection_port": null,
+          "payload_port": null
+        }
+        
+      },
+      "contract": {
+        "invariants": [
+          "There is exactly one upstream event driver (i_drive role) and one upstream release (o_free role).",
+          "There are NUM_PORTS downstream channels; each channel has a drive-out o_drive[k] and a paired free-in i_free[k].",
+          "Selection condition determines which channel receives the event drive (o_drive[k]).",
+          "Upstream release o_free is derived from the paired i_free of the selected channel by default (unless explicitly overridden by implementation)."
+        ],
+        "event_routing": {
+          "selected_drive_only": true,
+          "drive_rule": "o_drive[k] asserts only for selected k when upstream drive occurs"
+        },
+        "release_rule": {
+          "policy": "selected_only",
+          "allowed_variants": ["selected_only", "custom_expr"],
+          "details": "Selected channel's i_free[k] triggers upstream o_free"
+        }
+      },
+      "notes": [
+        "Selection condition encoding (one-hot/binary/thermometer) is implementation-defined; do NOT assume unless annotated or evidenced.",
+        "The generation of `o_free` in the code appears to be triggered by `i_free` from any channel. However, the module's logic ensures that only one downstream module is driven, and only the driven downstream module sends the free signal. The code is written for convenience only."
+        
+      ]
+    },
+
+
+    {
+      "family": "Fifo1",
+      "kind": "base_component_template",
+      "params": {
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream_event": {
+          "drive_port": null,
+          "free_port": null
+        },
+        "downstream_event": {
+          "driveNext_port": null,
+          "freeNext_port": null
+        },
+        "reset": {
+          "reset_port": "rstn",
+          "reset_active_low": true
+        },
+        "fire":{
+          "port": null
+        }
+      },
+      "contract": {
+        "invariants": [
+          "Non-reentrant: the FIFO stage must not accept a new upstream drive until the previous transaction is freed.",
+          "Upstream o_free is only generated after receiving the paired i_free (i_freeNext in staged designs), which indicates the transaction is complete."
+        ],
+        "reentrancy": { "supported": false },
+        "completion_propagation": {
+          "upstream_free_depends_on_downstream_free": true,
+          "notes": [
+            "o_free is the upstream's permission to issue the next drive; it is not emitted before the paired free is observed."
+          ]
+        }
+      },
+      "notes": [
+        "This FIFO stage does not buffer multiple transactions; it holds only one transaction at a time.",
+        "The FIFO stage enforces backpressure by not allowing new upstream drives until the current transaction is completed downstream.",
+        "This component will not carry a payload; it will only transmit events."
+      ]
+    },
+
+
+    {
+      "family": "PmtFifo1",
+      "kind": "base_component_template",
+      "params": {
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream_event": { "drive_port": null, "free_port": null },
+        "downstream_event": { "driveNext_port": null, "freeNext_port": null },
+        "permit": {
+          "pmt_port": null,
+          "active_level": "positive"
+        },
+        "reset": { "reset_port": "rstn", "reset_active_low": true },
+        "fire":{
+          "port": null
+        }
+      },
+      "contract": {
+        "invariants": [
+          "Permit-off stalls progression: when permit is disabled, the stage pauses forwarding (no downstream advance).",
+          "Otherwise identical to Fifo1 invariants (including non-reentrancy and free-driven completion)."
+        ],
+        "permit_semantics": {
+          "behavior_when_disabled": "stall",
+          "notes": [
+            "Stall means it pauses progression/forwarding; do not interpret as protocol change unless explicitly implemented."
+          ]
+        }
+      },
+      "notes": [
+        "This FIFO stage incorporates a permit signal to control progression.",
+        "When the permit signal is inactive, the FIFO stage halts forwarding events downstream.",
+        "The permit is controlled by the 'pmtRelay'.",
+        "This component will not carry a payload; it will only transmit events."
+      ]
+    },
+
+    {
+      "family": "NatSplit",
+      "kind": "base_component_template",
+      "params": {
+        "NUM_PORTS": null,
+        "DATA_WIDTH": null,
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream": { "drive_port": null, "free_port": null },
+        "downstream": {
+          "drive_ports": null,
+          "free_ports": null
+        },
+        "reset": { "reset_port": "rstn", "reset_active_low": true },
+        "payload": {
+          "payload_port": null
+        }
+      },
+      "contract": {
+        "invariants": [
+          "Broadcast semantics: an upstream event is broadcast to ALL downstream channels (not selection-based).",
+          "Upstream o_free must wait for ALL downstream frees (all-acks completion)."
+        ],
+        "release_rule": {
+          "policy": "all_ports",
+          "details": "o_free is emitted only after every paired i_free[k] indicates completion"
+        }
+      },
+      "notes": [
+        "Payload width per output channel may differ from input payload width; DATA_WIDTHOUT param is provided for this purpose.",
+        "Broadcast means all downstream channels receive the event drive simultaneously.",
+        "The number of output channels is determined by the NUM_PORTS parameter. The width of each output channel can be specified by a parameter or explicitly defined during initialization."
+      ]
+    },
+
+    {
+      "family": "WaitMerge",
+      "kind": "base_component_template",
+      "params": {
+        "NUM_PORTS": null,
+        "DATA_WIDTH": null,
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream": { "drive_port": null, "free_port": null },
+        "downstream": {
+          "drive_ports": null,
+          "free_ports": null
+        },
+        "payload": {
+          "payload_port": null
+        },
+        "reset": { "reset_port": "rstn", "reset_active_low": true }
+      },
+      "contract": {
+        "invariants": [
+          "All-inputs join: output event triggers only when ALL inputs have arrived (all inputs to be ready).",
+          "upstream free follow output free_in together (broadcast completion back to all inputs)."
+        ],
+        "release_rule": {
+          "policy": "broadcast_from_output_free",
+          "details": "When output free arrives, free_out[k] are issued together for all k"
+        }
+      },
+      "notes": [
+        "All-inputs join means the output event drive occurs only when all input drives have arrived.",
+        "The number of input ports can be parameterized or hard-coded, and can be determined based on port resolution."
+      ]
+    },
+
+    {
+      "family": "ArbMerge",
+      "kind": "base_component_template",
+      "params": {
+        "NUM_PORTS": null,
+        "DATA_WIDTH": null,
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream": { "drive_port": null, "free_port": null },
+        "downstream": {
+          "drive_ports": null,
+          "free_ports": null
+        },
+        "payload": {
+          "payload_port": null
+        },
+        "reset": { "reset_port": "rstn", "reset_active_low": true }
+      },
+      "contract": {
+        "invariants": [
+          "Arbitration policy is implementation-specific (each module may define its own policy).",
+          "Exclusivity: at any time, only ONE input is served (one grant / one selected input per service)."
+        ],
+        "arbitration_policy": {
+          "policy": "implementation_defined",
+          "allowed_variants": ["fixed_priority", "round_robin", "custom"]
+        },
+        "grant_exclusivity": { "one_at_a_time": true },
+        "release_rule": {
+          "policy": "selected_only",
+          "details": "Only the granted input receives completion back (free_out) per transaction"
+        }
+       
+      },
+      "notes": [
+        "The number of input ports can be parameterized or hard-coded, and can be determined based on port resolution."
+      ]
+    },
+
+    {
+      "family": "MutexMerge",
+      "kind": "base_component_template",
+      "params": {
+        "NUM_PORTS": null,
+        "DATA_WIDTH": null,
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "upstream": { "drive_port": null, "free_port": null },
+        "downstream": {
+          "drive_ports": null,
+          "free_ports": null
+        },
+        "payload": {
+          "payload_port": null
+        },
+        "reset": { "reset_port": "rstn", "reset_active_low": true }
+      },
+      "contract": {
+        "invariants": [
+          "Environment provides mutual exclusion: upstream inputs are assumed mutually exclusive.",
+          "Conflicts are assumed NOT to arrive simultaneously; the component does not need to resolve simultaneous contention."
+        ],
+        "exclusion_model": { "policy": "environment_mutex_assumed" },
+        "conflict_handling": {
+          "simultaneous_requests_expected": false,
+          "if_happens": "undefined_or_out_of_contract"
+        },
+        "release_rule": {
+          "policy": "selected_only",
+          "details": "Completion corresponds to the active input; simultaneous case is out-of-contract"
+        }
+      },
+      "notes": [
+        "The number of input ports can be parameterized or hard-coded, and can be determined based on port resolution."
+      ]
+    },
+
+    {
+      "family": "eventSource",
+      "kind": "base_component_template",
+      "params": {
+        "EXTRA_PARAMS": {}
+      },
+      "interface": {
+        "trigger": {
+          "switch_port": null
+        },
+        "event_output": {
+          "fire_port": null
+        },
+        "reset": {
+          "reset_port": "rst",
+          "reset_active_low": false
+        }
+      },
+
+      "contract": {
+        "invariants": [
+          "This family produces an event/fire output from local trigger or condition inputs.",
+          "It is a source-side component and does not require an upstream drive/free handshake by default."
+        ],
+        "event_generation": {
+          "policy": "implementation_defined",
+          "details": "The exact pulse timing and trigger condition are defined by the concrete RTL implementation."
+        },
+        "release_rule": {
+          "policy": "none",
+          "details": "No downstream free/ack completion semantics are assumed unless explicitly annotated."
+        }
+      },
+      "notes": [
+        "Observed implementations may use switch/reset logic and delay cells to form a fire pulse.",
+        "Technology-cell and delay-chain details should remain implementation details, not family-level protocol assumptions."
+      ]
+    }
+  ]
+}

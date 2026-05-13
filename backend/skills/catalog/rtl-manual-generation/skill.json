@@ -1,0 +1,30 @@
+{
+  "priority": 10,
+  "triggers": [
+    "生成代码手册",
+    "生成手册",
+    "代码手册",
+    "项目手册",
+    "模块手册",
+    "手册生成",
+    "文档生成",
+    "manual",
+    "Manual IR",
+    "manual_ir",
+    "ContextPack",
+    "parser",
+    "knowledge",
+    "README",
+    "docs",
+    "RTL"
+  ],
+  "tool_names": [
+    "read_file",
+    "write_file",
+    "run_parser_tool",
+    "run_knowledge_tool"
+  ],
+  "reference_files": [
+    "backend/skills/catalog/rtl-manual-generation/references/skill_script_reference.md"
+  ]
+}

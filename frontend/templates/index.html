@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的 AI Agent</title>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="app">
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">AI</div>
+            <div>
+                <h2>炼芯智能Agent</h2>
+                <p>本地智能助手</p>
+            </div>
+        </div>
+
+        <button class="new-chat-btn" onclick="newChat()">
+            ＋ 新对话
+        </button>
+
+        <div class="sidebar-section">
+            <p class="section-title">聊天记录</p>
+            <div id="conversation-list" class="conversation-list">
+                <div class="empty-history">暂无聊天记录</div>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            Local Agent · DeepSeek
+        </div>
+    </aside>
+
+    <main class="main">
+
+        <header class="topbar">
+            <div>
+                <h1>我的 AI Agent</h1>
+                <p>可以调用工具、读取文件、分析代码的本地网页版 Agent</p>
+            </div>
+
+            <div class="status">
+                <span></span>
+                本地运行中
+            </div>
+        </header>
+
+        <section id="chat-box" class="chat-box">
+            <div class="message assistant">
+                <div class="avatar">AI</div>
+                <div class="bubble">
+                    你好，我是你的本地 Agent。你可以上传文件、通过路径导入大文件、读取文件、分析代码、生成代码手册或执行命令。
+                </div>
+            </div>
+        </section>
+
+        <footer class="input-area">
+            <div class="input-wrapper">
+                <button id="upload-btn" onclick="openUploadDialog()" title="上传小文件或 zip">
+                    ＋
+                </button>
+
+                <button id="path-btn" onclick="importPath()" title="通过本机路径导入大文件">
+                    路径
+                </button>
+
+                <input
+                    type="file"
+                    id="file-input"
+                    multiple
+                    accept=".txt,.md,.json,.py,.html,.css,.js,.v,.sv,.vh,.log,.csv,.zip"
+                    style="display: none;"
+                    onchange="uploadFiles()"
+                >
+
+                <textarea
+                    id="user-input"
+                    placeholder="给 Agent 发送任务，例如：请读取 E:/智能体测试站/rtl 并生成代码手册"
+                    rows="1"
+                ></textarea>
+
+                <button id="send-btn" onclick="sendMessage()">
+                    发送
+                </button>
+            </div>
+
+            <p class="input-tip">Enter 发送，Shift + Enter 换行。小文件点 ＋，大文件点“路径”。</p>
+        </footer>
+
+    </main>
+</div>
+
+<script>
+const chatBox = document.getElementById("chat-box");
+const input = document.getElementById("user-input");
+const sendBtn = document.getElementById("send-btn");
+const conversationList = document.getElementById("conversation-list");
+const fileInput = document.getElementById("file-input");
+
+let currentConversationId = null;
+
+function escapeText(text) {
+    return text || "";
+}
+
+function addMessage(role, text) {
+    const message = document.createElement("div");
+    message.className = "message " + role;
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.innerText = role === "user" ? "你" : "AI";
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.innerText = escapeText(text);
+
+    message.appendChild(avatar);
+    message.appendChild(bubble);
+
+    chatBox.appendChild(message);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function clearChatBox() {
+    chatBox.innerHTML = "";
+}
+
+function showWelcomeMessage() {
+    addMessage("assistant", "你好，我是你的本地 Agent。你可以上传文件、通过路径导入大文件、读取文件、分析代码、生成代码手册或执行命令。");
+}
+
+function renderMessages(messages) {
+    clearChatBox();
+
+    if (!messages || messages.length === 0) {
+        showWelcomeMessage();
+        return;
+    }
+
+    messages.forEach(msg => {
+        addMessage(msg.role, msg.content);
+    });
+}
+
+function closeAllMenus() {
+    document.querySelectorAll(".conversation-menu").forEach(menu => {
+        menu.classList.remove("show");
+    });
+}
+
+function renderConversations(conversations) {
+    conversationList.innerHTML = "";
+
+    if (!conversations || conversations.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty-history";
+        empty.innerText = "暂无聊天记录";
+        conversationList.appendChild(empty);
+        return;
+    }
+
+    conversations.forEach(item => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "conversation-wrapper";
+
+        if (item.id === currentConversationId) {
+            wrapper.classList.add("active");
+        }
+
+        const row = document.createElement("div");
+        row.className = "conversation-row";
+
+        const mainBtn = document.createElement("button");
+        mainBtn.className = "conversation-main";
+        mainBtn.onclick = () => loadConversation(item.id);
+
+        const title = document.createElement("div");
+        title.className = "conversation-title";
+        title.innerText = item.title || "未命名对话";
+
+        const time = document.createElement("div");
+        time.className = "conversation-time";
+        time.innerText = item.updated_at || "";
+
+        mainBtn.appendChild(title);
+        mainBtn.appendChild(time);
+
+        const menuBtn = document.createElement("button");
+        menuBtn.className = "conversation-menu-btn";
+        menuBtn.innerText = "⋯";
+
+        menuBtn.onclick = (event) => {
+            event.stopPropagation();
+            closeAllMenus();
+
+            const menu = wrapper.querySelector(".conversation-menu");
+            menu.classList.toggle("show");
+        };
+
+        row.appendChild(mainBtn);
+        row.appendChild(menuBtn);
+
+        const menu = document.createElement("div");
+        menu.className = "conversation-menu";
+
+        const renameItem = document.createElement("button");
+        renameItem.className = "conversation-menu-item";
+        renameItem.innerText = "重命名";
+        renameItem.onclick = (event) => {
+            event.stopPropagation();
+            closeAllMenus();
+            renameConversation(item.id, item.title);
+        };
+
+        const deleteItem = document.createElement("button");
+        deleteItem.className = "conversation-menu-item danger";
+        deleteItem.innerText = "删除";
+        deleteItem.onclick = (event) => {
+            event.stopPropagation();
+            closeAllMenus();
+            deleteConversation(item.id);
+        };
+
+        menu.appendChild(renameItem);
+        menu.appendChild(deleteItem);
+
+        wrapper.appendChild(row);
+        wrapper.appendChild(menu);
+
+        conversationList.appendChild(wrapper);
+    });
+}
+
+async function loadConversations() {
+    try {
+        const response = await fetch("/conversations");
+        const data = await response.json();
+
+        currentConversationId = data.current_id;
+        renderConversations(data.conversations);
+
+    } catch (error) {
+        console.error("加载聊天记录失败：", error);
+    }
+}
+
+async function loadConversation(conversationId) {
+    try {
+        const response = await fetch("/conversation/" + conversationId);
+        const data = await response.json();
+
+        currentConversationId = data.conversation_id;
+
+        renderMessages(data.messages);
+        renderConversations(data.conversations);
+
+    } catch (error) {
+        console.error("加载对话失败：", error);
+    }
+}
+
+async function deleteConversation(conversationId) {
+    const ok = confirm("确定要删除这条聊天记录吗？删除后无法恢复。");
+
+    if (!ok) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/conversation/" + conversationId, {
+            method: "DELETE"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || "删除失败");
+            return;
+        }
+
+        currentConversationId = data.current_id;
+
+        renderMessages(data.messages);
+        renderConversations(data.conversations);
+
+    } catch (error) {
+        alert("删除失败：" + error);
+    }
+}
+
+async function renameConversation(conversationId, oldTitle) {
+    const newTitle = prompt("请输入新的聊天标题：", oldTitle || "");
+
+    if (newTitle === null) {
+        return;
+    }
+
+    const title = newTitle.trim();
+
+    if (!title) {
+        alert("标题不能为空。");
+        return;
+    }
+
+    try {
+        const response = await fetch("/conversation/" + conversationId + "/rename", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                title: title
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || "重命名失败");
+            return;
+        }
+
+        renderConversations(data.conversations);
+
+    } catch (error) {
+        alert("重命名失败：" + error);
+    }
+}
+
+async function newChat() {
+    try {
+        const response = await fetch("/new_chat", {
+            method: "POST"
+        });
+
+        const data = await response.json();
+
+        currentConversationId = data.conversation_id;
+
+        renderMessages(data.messages);
+        renderConversations(data.conversations);
+
+        showWelcomeMessage();
+
+    } catch (error) {
+        console.error("新建对话失败：", error);
+    }
+}
+
+function openUploadDialog() {
+    fileInput.click();
+}
+
+async function uploadFiles() {
+    const files = fileInput.files;
+
+    if (!files || files.length === 0) {
+        return;
+    }
+
+    const formData = new FormData();
+
+    for (const file of files) {
+        formData.append("files", file);
+    }
+
+    addMessage("user", "上传文件：" + Array.from(files).map(f => f.name).join(", "));
+
+    addMessage("assistant", "正在上传文件...");
+    const loadingBubble = chatBox.lastChild.querySelector(".bubble");
+
+    try {
+        const response = await fetch("/upload", {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await response.json();
+
+        let text = "";
+
+        if (!response.ok) {
+            text += data.error || "上传失败。";
+
+            if (data.rejected_files && data.rejected_files.length > 0) {
+                text += "\n\n失败原因：\n";
+
+                data.rejected_files.forEach(file => {
+                    text += `- ${file.filename}：${file.reason}\n`;
+                });
+            }
+
+            loadingBubble.innerText = text;
+            return;
+        }
+
+        text += "文件上传完成。\n\n";
+
+        if (data.files && data.files.length > 0) {
+            text += "已保存文件：\n";
+
+            data.files.forEach(file => {
+                if (file.type === "zip") {
+                    text += `- ${file.original_name} → ${file.saved_path}\n`;
+                    text += `  解压目录：${file.extract_dir}\n`;
+                } else {
+                    text += `- ${file.original_name} → ${file.saved_path}\n`;
+                }
+            });
+        }
+
+        if (data.extracted_zip_files && data.extracted_zip_files.length > 0) {
+            text += "\nzip 解压结果：\n";
+
+            data.extracted_zip_files.forEach(zip => {
+                text += `\n压缩包：${zip.zip_name}\n`;
+                text += `解压目录：${zip.extract_dir}\n`;
+
+                if (zip.files && zip.files.length > 0) {
+                    text += "已解压文件：\n";
+
+                    zip.files.slice(0, 30).forEach(file => {
+                        text += `- ${file.saved_path}\n`;
+                    });
+
+                    if (zip.files.length > 30) {
+                        text += `... 还有 ${zip.files.length - 30} 个文件未显示\n`;
+                    }
+                }
+
+                if (zip.skipped_files && zip.skipped_files.length > 0) {
+                    text += "\n跳过文件：\n";
+
+                    zip.skipped_files.slice(0, 20).forEach(file => {
+                        text += `- ${file.filename}：${file.reason}\n`;
+                    });
+                }
+            });
+        }
+
+        text += "\n你现在可以这样问我：\n";
+
+        const firstZip = data.extracted_zip_files && data.extracted_zip_files[0];
+
+        if (firstZip) {
+            text += `请读取 ${firstZip.extract_dir} 中的 RTL 文件，帮我生成代码手册，top_module 是 arm_soc_top`;
+        } else if (data.files && data.files[0]) {
+            text += `请读取 ${data.files[0].saved_path} 并分析这个文件`;
+        }
+
+        loadingBubble.innerText = text;
+
+    } catch (error) {
+        loadingBubble.innerText = "上传失败：" + error;
+    }
+
+    fileInput.value = "";
+}
+
+async function importPath() {
+    const path = prompt("请输入本机文件、zip 或文件夹路径，例如：E:\\智能体测试站\\rtl.zip");
+
+    if (path === null) {
+        return;
+    }
+
+    const realPath = path.trim();
+
+    if (!realPath) {
+        alert("路径不能为空。");
+        return;
+    }
+
+    addMessage("user", "通过路径导入：" + realPath);
+
+    addMessage("assistant", "正在通过本机路径导入...");
+    const loadingBubble = chatBox.lastChild.querySelector(".bubble");
+
+    try {
+        const response = await fetch("/import_path", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                path: realPath
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            loadingBubble.innerText = data.error || "路径导入失败。";
+            return;
+        }
+
+        let text = data.message + "\n\n";
+
+        if (data.type === "folder") {
+            text += `文件夹路径：${data.source_path}\n\n`;
+            text += "你现在可以这样问我：\n";
+            text += `请读取 ${data.source_path} 中的 RTL 文件，帮我生成代码手册，top_module 是 arm_soc_top`;
+        }
+
+        if (data.type === "file") {
+            text += `原始路径：${data.original_path}\n`;
+            text += `保存路径：${data.saved_path}\n\n`;
+            text += "你现在可以这样问我：\n";
+            text += `请读取 ${data.saved_path} 并分析这个文件`;
+        }
+
+        if (data.type === "zip") {
+            text += `原始路径：${data.original_path}\n`;
+            text += `zip 保存路径：${data.saved_zip}\n`;
+            text += `解压目录：${data.extract_dir}\n\n`;
+
+            if (data.files && data.files.length > 0) {
+                text += "已解压文件：\n";
+
+                data.files.slice(0, 30).forEach(file => {
+                    text += `- ${file.saved_path}\n`;
+                });
+
+                if (data.files.length > 30) {
+                    text += `... 还有 ${data.files.length - 30} 个文件未显示\n`;
+                }
+            }
+
+            if (data.skipped_files && data.skipped_files.length > 0) {
+                text += "\n跳过文件：\n";
+
+                data.skipped_files.slice(0, 20).forEach(file => {
+                    text += `- ${file.filename}：${file.reason}\n`;
+                });
+            }
+
+            text += "\n你现在可以这样问我：\n";
+            text += `请读取 ${data.extract_dir} 中的 RTL 文件，帮我生成代码手册，top_module 是 arm_soc_top`;
+        }
+
+        loadingBubble.innerText = text;
+
+    } catch (error) {
+        loadingBubble.innerText = "路径导入失败：" + error;
+    }
+}
+
+async function sendMessage() {
+    const text = input.value.trim();
+
+    if (!text) {
+        return;
+    }
+
+    addMessage("user", text);
+
+    input.value = "";
+    autoResize();
+
+    sendBtn.disabled = true;
+    sendBtn.innerText = "思考中";
+
+    addMessage("assistant", "正在思考...");
+    const loadingBubble = chatBox.lastChild.querySelector(".bubble");
+
+    try {
+        const response = await fetch("/chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                message: text
+            })
+        });
+
+        const data = await response.json();
+
+        loadingBubble.innerText = data.reply;
+
+        currentConversationId = data.conversation_id;
+        renderConversations(data.conversations);
+
+    } catch (error) {
+        loadingBubble.innerText = "请求失败：" + error;
+    }
+
+    sendBtn.disabled = false;
+    sendBtn.innerText = "发送";
+}
+
+function autoResize() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 160) + "px";
+}
+
+input.addEventListener("input", autoResize);
+
+input.addEventListener("keydown", function(event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+    }
+});
+
+document.addEventListener("click", function() {
+    closeAllMenus();
+});
+
+window.addEventListener("load", async function() {
+    await loadConversations();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "priority": 100,
+  "triggers": [
+    "python",
+    "Python代码",
+    "代码结构",
+    "解析代码",
+    "分析代码",
+    "函数",
+    "类",
+    "import",
+    "主循环"
+  ],
+  "tool_names": [
+    "read_file",
+    "parse_python_code"
+  ],
+  "reference_files": []
+}
